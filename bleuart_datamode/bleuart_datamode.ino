@@ -10,6 +10,7 @@
  *  |    11    |      TX0       |
  *  |    12    |      RX1       |
  *  |    13    |      CTS       |
+ *  |     9    |      RST       |
  */
 
 #include <Arduino.h>
@@ -48,6 +49,13 @@ byte outBuf[3];
 char buf[20];
 uint8_t size=3;
 
+void wait_for_connection(void) {
+    // Wait for connection
+  while (ble.isConnected() == 0) {
+    delay(500);
+  }
+}
+
 void setup(void)
 {
   while (!Serial);  // required for Flora & Micro
@@ -79,85 +87,31 @@ void setup(void)
   // configure GATT services and advertising
   ble.sendCommandCheckOK("AT+GATTLIST");
   ble.sendCommandCheckOK("AT+GATTADDSERVICE=UUID128=03-B8-0E-5A-ED-E8-4B-33-A7-51-6C-E3-4E-C4-C7-00");
-  ble.sendCommandCheckOK("AT+GATTADDCHAR=UUID128=77-72-E5-DB-38-68-41-12-A1-A9-F2-66-9D-10-6B-F3,PROPERTIES=0x96,MIN_LEN=1,MAX_LEN=20,VALUE=0");
-  //ble.sendCommandCheckOK("AT+GAPINTERVALS=8,15,250,180");
+  ble.sendCommandCheckOK("AT+GATTADDCHAR=UUID128=77-72-E5-DB-38-68-41-12-A1-A9-F2-66-9D-10-6B-F3,PROPERTIES=0x96,MIN_LEN=1,MAX_LEN=20");
+  ble.sendCommandCheckOK("AT+GAPINTERVALS=8,15,250,180");
   ble.sendCommandCheckOK("AT+GAPSETADVDATA=02-01-06-11-06-00-C7-C4-4E-E3-6C-51-A7-33-4B-E8-ED-5A-0E-B8-03");
-  //ble.sendCommandCheckOK("AT+BLEPOWERLEVEL=4");
+  ble.sendCommandCheckOK("AT+BLEPOWERLEVEL=4");
   ble.reset();
 
   ble.verbose(false);  // debug info is a little annoying after this point!
 
-  // Wait for connection
-  while (ble.isConnected() == 0) {
-    delay(500);
-  }
-
-  Serial.println(F("*****************"));
-
-  // Set module to DATA mode
-  Serial.println( F("Switching to DATA mode!") );
-  ble.setMode(BLUEFRUIT_MODE_DATA);
-
-  Serial.println(F("*****************"));
-  
-  // send empty packet
-  ble_midi_send(0, 0, 0);
+  wait_for_connection();
 }
 
-
-
-
-/*******************************************************************************
- * Convert MIDI Data to MIDI-BLE Packets
- * copied from https://github.com/sieren/blidino
- *******************************************************************************/
-void parseMIDItoAppleBle(int size, byte outBuf[3])
-{
-  char time[2];
-  char buf[20];
-  unsigned long timer = 0;
-  int lastPos;
-  timer = millis();
-  uint16_t blueMidiTime = 0;
-  blueMidiTime = 32768 + (timer % 16383);
-
-
-  if(midi_rx_buf_num <= 100) // arbitrary high number
-  {
-    midi_rx_buf[midi_rx_buf_num] = (blueMidiTime >> 8);  // | 0x80 & 0xBF;
-    midi_rx_buf_num++;
-    midi_rx_buf[midi_rx_buf_num] = 0x80;
-    midi_rx_buf_num++;
-
-    for (int i = 0; i < size; i++)
-    {
-      midi_rx_buf[midi_rx_buf_num] = outBuf[i];
-      midi_rx_buf_num++;
-    }
-  }
-}
-
-
-int noteON = 0x90; // dec 144 = 10010000 in binary, note on command
-int noteOFF = 0x80; // dec 128 = 10000000 in binary, note off command
-int velocity = 100;
-
+unsigned char noteON = 0x90; // dec 144 = 10010000 in binary, note on command
+unsigned char noteOFF = 0x80; // dec 128 = 10000000 in binary, note off command
+unsigned char velocity = 100;
 
 /*
- * Send data to the Bluefruit
- * Should it set the values of characteristic instead?
+ * Set the new characteristic value
+ * format: AT+GATTCHAR=1,AF-80-XX-YY-ZZ
+ * where XX is the command, YY is note and ZZ is velocity
  */
-void ble_midi_send(char command, char param1, char param2) {
-    midi_rx_buf_num = 0;
-    outBuf[0] = command;
-    outBuf[1] = param1;
-    outBuf[2] = param2;
-    
-    parseMIDItoAppleBle(size, outBuf);
-    
-    for(int i=0; i<midi_rx_buf_num; i++) {
-       ble.write(midi_rx_buf[i]);
-    }
+void ble_midi_send(unsigned char command, unsigned char param1, unsigned char param2) {
+    static char *buf = "AT+GATTCHAR=1,AF-80-00-00-00";
+    sprintf(buf+20, "%X-%02X-%02X", command, param1, param2);
+    ble.sendCommandCheckOK(buf);
+    Serial.println(buf);
 }
 
 
@@ -167,7 +121,9 @@ void loop(void)
     ble_midi_send(noteON, note, velocity);  //turn note on
     delay(300);  // hold note for 300ms
 
-    ble_midi_send(noteOFF, 0, 0);
+    ble_midi_send(noteOFF, note, 0);
     delay(200);  // wait 200ms until triggering next note
+
+    wait_for_connection();
   }
 }
